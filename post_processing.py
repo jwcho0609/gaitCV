@@ -1,13 +1,16 @@
 from typing import Tuple
 
+from pathlib import Path
+import time
+
 import pyrealsense2 as rs
 import numpy as np
 import numpy.typing as npt
 import cv2
 import matplotlib.pyplot as plt
-import time
 
-CAMERA_ORI = "vertical"
+CAMERA_ORI = "horizontal"
+SHOE_FACTOR = "shoe"
 MAX_SAVE_FILES = 5
 
 
@@ -27,13 +30,19 @@ def filter_depth(
     depth_mask = np.zeros(depth_img.shape)
 
     # filter for the lower bound
-    depth_mask[np.where(depth_image > lower_bound)] = 1
+    depth_mask[np.where(depth_image > lower_bound)] = 255
     first_mask = depth_mask.copy()
 
     # filter for the upper bound
     depth_mask[np.where(depth_img > upper_bound)] = 0
 
     images = np.hstack((first_mask, depth_mask))
+
+    # save depth image
+    curr_path = Path(__file__).parent
+    save_path = curr_path / f"test/{CAMERA_ORI}_{SHOE_FACTOR}_depth_mask.jpg"
+
+    cv2.imwrite(str(save_path), images)
 
     cv2.imshow("filtered depth mask", images)
     cv2.waitKey(0)
@@ -145,8 +154,8 @@ def visualize_img(color_img: npt.NDArray[np.uint8], depth_img: npt.NDArray[np.ui
 
 for i in np.arange(5):
     # depth image default scale is one millimeter
-    depth_image = np.load(f"data/{CAMERA_ORI}/shoe/depth_{i}.npy")
-    color_image = np.load(f"data/{CAMERA_ORI}/shoe/color_{i}.npy")
+    depth_image = np.load(f"data/{CAMERA_ORI}/{SHOE_FACTOR}/depth_{i}.npy")
+    color_image = np.load(f"data/{CAMERA_ORI}/{SHOE_FACTOR}/color_{i}.npy")
 
     if CAMERA_ORI == "vertical":
         depth_image = cv2.rotate(depth_image, cv2.ROTATE_90_COUNTERCLOCKWISE)
@@ -155,12 +164,12 @@ for i in np.arange(5):
     # cv2.imshow('Original', color_image)
     # cv2.waitKey(0)
 
-    filter_depth(depth_image, 0, 800)
+    filter_depth(depth_image, 200, 500)
 
     # -------------------------------------------------------------------------
     # GrabCut algorithm
     bounding_box = (127, 0, 371 - 127, 366)
-    masked_img = perform_grabcut(color_image, bounding_box)
+    # masked_img = perform_grabcut(color_image, bounding_box)
 
     # -------------------------------------------------------------------------
 
