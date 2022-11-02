@@ -1,4 +1,5 @@
 from typing import Tuple
+import logging
 
 from pathlib import Path
 import time
@@ -9,7 +10,9 @@ import numpy.typing as npt
 import cv2
 import matplotlib.pyplot as plt
 
-CAMERA_ORI = "horizontal"
+_logger = logging.getLogger(__name__)
+
+CAMERA_ORI = "vertical"
 SHOE_FACTOR = "shoe"
 MAX_SAVE_FILES = 5
 
@@ -26,11 +29,15 @@ def filter_depth(
         upper_bound (int): upper distance value to filter out of depth (mm)
     """
 
+    _logger.info(
+        f"filtering depth based on lower and upper bounds: ({lower_bound}, {upper_bound}) mm"
+    )
+
     # empty mask declaration
     depth_mask = np.zeros(depth_img.shape)
 
     # filter for the lower bound
-    depth_mask[np.where(depth_image > lower_bound)] = 255
+    depth_mask[np.where(depth_img > lower_bound)] = 255
     first_mask = depth_mask.copy()
 
     # filter for the upper bound
@@ -46,6 +53,33 @@ def filter_depth(
 
     cv2.imshow("filtered depth mask", images)
     cv2.waitKey(0)
+
+    return depth_mask
+
+
+def approx_bounding_box(depth_mask: npt.NDArray[np.uint8]):
+
+    _logger.info("Approximating the bounding box.")
+
+    # find the left edge of the bounding box
+    # maximum vertical pixels to consider [0, 1] with 1 being 100% of height from top of image
+    vert_bound = 0.5
+    mask_bounded = depth_mask[0 : int(depth_mask.shape[0] * vert_bound), :]
+    left_bound = 0
+
+    # sweep columns from left to right and stop when a column with pixel is found (left edge of leg)
+    for i in np.arange(depth_mask.shape[1]):
+        col = mask_bounded[:, i]
+
+        if any(col):
+            left_bound = i
+            break
+
+    _logger.info(f"Left edge: {left_bound}")
+
+    # find the right edge of the bounding box
+
+    return None
 
 
 def perform_grabcut(
@@ -65,6 +99,8 @@ def perform_grabcut(
     Returns:
         npt.NDArray[np.uint8]: mask of foreground object
     """
+
+    _logger.info(f"Performing GrabCut algorithm with {iterations} iterations.")
 
     mask = np.zeros(color_img.shape[:2], dtype="uint8")
 
@@ -152,6 +188,9 @@ def visualize_img(color_img: npt.NDArray[np.uint8], depth_img: npt.NDArray[np.ui
     cv2.waitKey(0)
 
 
+logging.basicConfig(level=logging.INFO)
+_logger.info(f"Current dataset: {CAMERA_ORI} capture | {SHOE_FACTOR}")
+
 for i in np.arange(5):
     # depth image default scale is one millimeter
     depth_image = np.load(f"data/{CAMERA_ORI}/{SHOE_FACTOR}/depth_{i}.npy")
@@ -164,7 +203,11 @@ for i in np.arange(5):
     # cv2.imshow('Original', color_image)
     # cv2.waitKey(0)
 
-    filter_depth(depth_image, 200, 500)
+    # generate preliminary mask from depth to approx. bounding box
+    depth_mask = filter_depth(depth_image, 200, 500)
+
+    # find the approx. bounding box
+    approx_bounding_box(depth_mask)
 
     # -------------------------------------------------------------------------
     # GrabCut algorithm
