@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 
 _logger = logging.getLogger(__name__)
 
-CAMERA_ORI = "vertical"
+CAMERA_ORI = "horizontal"
 SHOE_FACTOR = "shoe"
 MAX_SAVE_FILES = 5
 
@@ -51,15 +51,29 @@ def filter_depth(
 
     cv2.imwrite(str(save_path), images)
 
-    cv2.imshow("filtered depth mask", images)
-    cv2.waitKey(0)
+    # cv2.imshow("filtered depth mask", images)
+    # cv2.waitKey(0)
 
     return depth_mask
 
 
-def approx_bounding_box(depth_mask: npt.NDArray[np.uint8]):
+def approx_bounding_box(
+    depth_mask: npt.NDArray[np.uint8], buffer: int
+) -> Tuple[int, int, int, int]:
+    """
+    Approximate the bounding box using mathematical approach.
+
+    Args:
+        depth_mask (npt.NDArray[np.uint8]): depth mask of image
+        buffer (int): buffer for the right/left edge of leg
+
+    Returns:
+        Tuple[int, int, int, int]: bounding box (x, y, w, h)
+    """
 
     _logger.info("Approximating the bounding box.")
+
+    dim = depth_mask.shape
 
     # find the left edge of the bounding box
     # maximum vertical pixels to consider [0, 1] with 1 being 100% of height from top of image
@@ -68,18 +82,56 @@ def approx_bounding_box(depth_mask: npt.NDArray[np.uint8]):
     left_bound = 0
 
     # sweep columns from left to right and stop when a column with pixel is found (left edge of leg)
-    for i in np.arange(depth_mask.shape[1]):
+    for i in np.arange(dim[1]):
         col = mask_bounded[:, i]
 
         if any(col):
             left_bound = i
             break
 
-    _logger.info(f"Left edge: {left_bound}")
+    # _logger.info(f"Left edge: {left_bound}")
 
     # find the right edge of the bounding box
+    # apply closing morph transform (dilate-erode) to clean noise
+    kernel = np.ones((10, 10), np.uint8)
+    cleaned_mask = cv2.morphologyEx(depth_mask, cv2.MORPH_CLOSE, kernel)
 
-    return None
+    # images = np.hstack((depth_mask, cleaned_mask))
+    # cv2.imshow("filter", images)
+    # cv2.waitKey(0)
+
+    x_val = []
+    y_val = []
+
+    for i in np.arange(dim[1]):
+        # iterate from the right edge of the image
+        col = depth_mask[:, dim[1] - i - 1]
+
+        # find row of where mask exists
+        first_ind = (np.where(col > 0)[0])[0]
+        y_val.insert(0, first_ind)
+        x_val.insert(0, dim[1] - i - 1)
+
+        # if we reach the right edge of the leg
+        if not first_ind:
+            break
+
+    # find the maximum peak of the y values, aka where the corner is
+    peak_ind = (np.where(y_val == max(y_val))[0])[-1]
+    right_bound = x_val[peak_ind]
+
+    # _logger.info(f"Right edge: {right_bound}")
+
+    if CAMERA_ORI == "horizontal":
+        y_buffer = 25
+    else:
+        y_buffer = 100
+
+    (x, y, w, h) = (left_bound, 0, right_bound - left_bound + buffer, dim[0] - y_buffer)
+
+    _logger.info(f"Bounding box: ({x}, {y}, {w}, {h})")
+
+    return (x, y, w, h)
 
 
 def perform_grabcut(
@@ -142,26 +194,46 @@ def perform_grabcut(
     # GrabCut to generate our final output image
     output = cv2.bitwise_and(color_img, color_img, mask=outputMask)
 
-    # cv2.imshow("Input", depth_colormap)
-    # cv2.imshow("GrabCut Mask", outputMask)
-    # cv2.imshow("GrabCut Output", output)
-    # cv2.waitKey(0)
+    cv2.imshow("Input", color_img)
+    cv2.imshow("GrabCut Mask", outputMask)
+    cv2.imshow("GrabCut Output", output)
+    cv2.waitKey(0)
 
     return output
 
 
-def visualize_img(color_img: npt.NDArray[np.uint8], depth_img: npt.NDArray[np.uint8]):
+def visualize_img(
+    color_img: npt.NDArray[np.uint8],
+    depth_img: npt.NDArray[np.uint8],
+    mask: npt.NDArray[np.uint8] = None,
+    bound_box: Tuple[int, int, int, int] = None,
+):
     """
     Visualize the color and depth image side by side. The depth image has color map applied.
 
     Args:
         color_img (npt.NDArray[np.uint8]): color image
         depth_img (npt.NDArray[np.uint8]): depth image
+        mask (npt.NDArray[np.uint8]): mask for the leg
     """
+
+    # apply the mask to the depth image and set outliers to 2000 mm away
+    if mask is not None:
+        for r in np.arange(mask.shape[0] - 1):
+            for c in np.arange(mask.shape[1] - 1):
+                if not mask[r, c]:
+                    depth_img[r, c] = 2000
 
     depth_colormap = cv2.applyColorMap(
         cv2.convertScaleAbs(depth_img, alpha=0.03), cv2.COLORMAP_JET
     )
+
+    # draw bounding box on color image
+    color_copy = color_image.copy()
+    cv2.rectangle(color_copy, (x, y), (x + w, y + h), (255, 0, 0), 4)
+
+    # cv2.imshow("bounded_box", color_image)
+    # cv2.waitKey(0)
 
     depth_colormap_dim = depth_colormap.shape
     color_colormap_dim = color_img.shape
@@ -175,7 +247,7 @@ def visualize_img(color_img: npt.NDArray[np.uint8], depth_img: npt.NDArray[np.ui
         )
         images = np.hstack((resized_color_image, depth_colormap))
     else:
-        images = np.hstack((color_image, depth_colormap))
+        images = np.hstack((color_copy, depth_colormap))
 
     # plot a straight line across the image at some y value
     # x = np.arange(640)
@@ -207,11 +279,14 @@ for i in np.arange(5):
     depth_mask = filter_depth(depth_image, 200, 500)
 
     # find the approx. bounding box
-    approx_bounding_box(depth_mask)
+    (x, y, w, h) = approx_bounding_box(depth_mask, 50)
+
+    # visualize_img(color_image, depth_image, depth_mask)
+    visualize_img(color_image, depth_image)
 
     # -------------------------------------------------------------------------
     # GrabCut algorithm
-    bounding_box = (127, 0, 371 - 127, 366)
+    bounding_box = (x, y, w, h)
     # masked_img = perform_grabcut(color_image, bounding_box)
 
     # -------------------------------------------------------------------------
