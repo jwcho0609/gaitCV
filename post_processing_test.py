@@ -28,7 +28,7 @@ for i in np.arange(5):
     depth_mask = filter_depth(depth_image, CAMERA_ORI, SHOE_FACTOR, 200, 500)
 
     # find the approx. bounding box
-    (x, y, w, h) = approx_bounding_box(depth_mask, 50, CAMERA_ORI)
+    (x, y, w, h) = approx_bounding_box(color_image, depth_mask, 50, CAMERA_ORI)
 
     # visualize_img(color_image, depth_image, depth_mask)
     # visualize_img(color_image, depth_image, depth_mask)

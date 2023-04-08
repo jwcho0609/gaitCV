@@ -9,6 +9,7 @@ import numpy as np
 import numpy.typing as npt
 import cv2
 import matplotlib.pyplot as plt
+import skimage
 
 _logger = logging.getLogger(__name__)
 
@@ -54,7 +55,7 @@ def filter_depth(
 
 
 def approx_bounding_box(
-    depth_mask: npt.NDArray[np.uint8], buffer: int, ori: str
+    color_image: npt.NDArray[np.uint8], depth_mask: npt.NDArray[np.uint8], buffer: int, ori: str, clean: bool = True
 ) -> Tuple[int, int, int, int]:
     """
     Approximate the bounding box using mathematical approach.
@@ -101,7 +102,7 @@ def approx_bounding_box(
 
     for i in np.arange(dim[1]):
         # iterate from the right edge of the image
-        col = depth_mask[:, dim[1] - i - 1]
+        col = cleaned_mask[:, dim[1] - i - 1]
 
         # find row of where mask exists
         first_ind = (np.where(col > 0)[0])[0]
@@ -124,6 +125,12 @@ def approx_bounding_box(
         y_buffer = 100
 
     (x, y, w, h) = (left_bound, 0, right_bound - left_bound + buffer, dim[0] - y_buffer)
+
+    if clean:
+        bounding_box = (x, y, w, h)
+        grabcut_mask = perform_grabcut(color_image, bounding_box)
+        y_max = np.max(np.nonzero(np.sum(grabcut_mask, axis=1)))
+        h = y_max
 
     _logger.info(f"Bounding box: ({x}, {y}, {w}, {h})")
 
@@ -183,7 +190,17 @@ def perform_grabcut(
     #     cv2.imshow(name, valueMask)
     #     cv2.waitKey(0)
 
+    # kernel = skimage.morphology.disk(8)
+    # mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11))
+    (thresh, binRed) = cv2.threshold(mask, 128, 255, cv2.THRESH_BINARY)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=3)
+
+    # mask = cv2.GaussianBlur(mask, (0,0), sigmaX=3, sigmaY=3, borderType = cv2.BORDER_DEFAULT)
+
     outputMask = np.where((mask == cv2.GC_BGD) | (mask == cv2.GC_PR_BGD), 0, 1)
+    
     # scale the mask from the range [0, 1] to [0, 255]
     outputMask = (outputMask * 255).astype("uint8")
 
@@ -218,7 +235,11 @@ def visualize_img(
 
     # draw bounding box on color image
     if bound_box is not None:
-        color_copy = color_image.copy()
+        color_copy = color_img.copy()
+        x = bound_box[0]
+        y = bound_box[1]
+        w = bound_box[2]
+        h = bound_box[3]
         cv2.rectangle(color_copy, (x, y), (x + w, y + h), (255, 0, 0), 4)
 
     # cv2.imshow("bounded_box", color_image)
@@ -254,6 +275,19 @@ def visualize_img(
     # Show images
     cv2.namedWindow("RealSense", cv2.WINDOW_AUTOSIZE)
     cv2.imshow("RealSense", images)
+    cv2.waitKey(0)
+
+
+def visualize_boundbox(color_img: npt.NDArray[np.uint8], bound_box: Tuple[int, int, int, int]):
+    # draw bounding box on color image
+    color_copy = color_img.copy()
+    x = bound_box[0]
+    y = bound_box[1]
+    w = bound_box[2]
+    h = bound_box[3]
+    cv2.rectangle(color_copy, (x, y), (x + w, y + h), (255, 0, 0), 4)
+
+    cv2.imshow("bounded_box", color_copy)
     cv2.waitKey(0)
 
 
