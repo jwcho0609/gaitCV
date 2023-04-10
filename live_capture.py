@@ -6,6 +6,18 @@ import cv2
 import PIL
 
 
+def increase_brightness(img, value=30):
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    h, s, v = cv2.split(hsv)
+
+    lim = 255 - value
+    v[v > lim] = 255
+    v[v <= lim] += value
+
+    final_hsv = cv2.merge((h, s, v))
+    img = cv2.cvtColor(final_hsv, cv2.COLOR_HSV2BGR)
+    return img
+
 CAMERA_ORI = "horizontal"
 SHOE_FACTOR = "shoe"
 CAPTURE_FREQ = 10
@@ -60,6 +72,8 @@ try:
         depth_image = np.asanyarray(depth_frame.get_data())
         color_jpg = color_frame.get_data()
         color_image = np.asanyarray(color_jpg)
+
+        # color_image = increase_brightness(color_image, value=20)
 
         depth_colormap = cv2.applyColorMap(
             cv2.convertScaleAbs(depth_image, alpha=0.03), cv2.COLORMAP_JET
