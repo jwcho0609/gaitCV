@@ -8,7 +8,7 @@ import PIL
 
 CAMERA_ORI = "horizontal"
 SHOE_FACTOR = "shoe"
-CAPTURE_FREQ = 5
+CAPTURE_FREQ = 10
 
 # calculate the number of images currently in the data folder
 path = f"./data/{CAMERA_ORI}/{SHOE_FACTOR}"
@@ -90,12 +90,12 @@ try:
         key = cv2.waitKey(1)
 
         if image_capture and frame_count == CAPTURE_FREQ:
-            np.save(f"{CAMERA_ORI}/{SHOE_FACTOR}/depth_{N}.npy", depth_image)
-            np.save(f"{CAMERA_ORI}/{SHOE_FACTOR}/color_{N}.npy", color_image)
-            cv2.imwrite(f"{CAMERA_ORI}/{SHOE_FACTOR}/color_{N}.jpeg", color_image)
+            print(f"image captured at: color_{N}")
+            np.save(f"./data/{CAMERA_ORI}/{SHOE_FACTOR}/depth_{N}.npy", depth_image)
+            np.save(f"./data/{CAMERA_ORI}/{SHOE_FACTOR}/color_{N}.npy", color_image)
+            cv2.imwrite(f"./data/{CAMERA_ORI}/{SHOE_FACTOR}/color_{N}.jpeg", color_image)
 
             N += 1
-            frame_count = 0
 
         if key == ord("q"):
             break
@@ -104,6 +104,8 @@ try:
             print(f"capture images: {image_capture}")
 
         frame_count += 1
+        if frame_count > CAPTURE_FREQ:
+            frame_count = 1
 
 finally:
     # Stop streaming
