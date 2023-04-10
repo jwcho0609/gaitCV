@@ -10,6 +10,9 @@ import numpy.typing as npt
 import cv2
 import matplotlib.pyplot as plt
 import skimage
+import torch
+import torchvision.transforms as T 
+from PIL import Image
 
 _logger = logging.getLogger(__name__)
 
@@ -291,10 +294,143 @@ def visualize_boundbox(color_img: npt.NDArray[np.uint8], bound_box: Tuple[int, i
     cv2.waitKey(0)
 
 
-def distance_measure(depth_img: npt.NDArray[np.uint8]):
+def distance_measure(depth_img: npt.NDArray[np.uint8]) -> int:
+    """
+    Given depth image, return the minimum depth. 
+
+    Args:
+        depth_img (npt.NDArray[np.uint8]): depth image in numpy array format. 
+
+    Returns:
+        int: distance in mm.
+    """
     nonzero_ind = depth_img[np.where(depth_img > 0)]
     min_dist = np.min(nonzero_ind)
 
     _logger.info(f"minimum distance found: {min_dist/1000} mm")
 
     return min_dist
+
+
+def decode_segmap(image, nc=21):
+    label_colors = np.array([(0, 0, 0),  # 0=background
+               # 1=aeroplane, 2=bicycle, 3=bird, 4=boat, 5=bottle
+               (128, 0, 0), (0, 128, 0), (128, 128, 0), (0, 0, 128), (128, 0, 128),
+               # 6=bus, 7=car, 8=cat, 9=chair, 10=cow
+               (0, 128, 128), (128, 128, 128), (64, 0, 0), (192, 0, 0), (64, 128, 0),
+               # 11=dining table, 12=dog, 13=horse, 14=motorbike, 15=person
+               (192, 128, 0), (64, 0, 128), (192, 0, 128), (64, 128, 128), (192, 128, 128),
+               # 16=potted plant, 17=sheep, 18=sofa, 19=train, 20=tv/monitor
+               (0, 64, 0), (128, 64, 0), (0, 192, 0), (128, 192, 0), (0, 64, 128)])
+    r = np.zeros_like(image).astype(np.uint8)
+    g = np.zeros_like(image).astype(np.uint8)
+    b = np.zeros_like(image).astype(np.uint8)
+    for l in range(0, nc):
+        if l == 15:
+            idx = image == l
+            r[idx] = label_colors[l, 0]
+            g[idx] = label_colors[l, 1]
+            b[idx] = label_colors[l, 2]
+            rgb = np.stack([r, g, b], axis=2)
+    return rgb
+
+
+def segment(img_rgb, img_np, net, visual=False):
+    # Comment the Resize and CenterCrop for better inference results
+    trf = T.Compose([
+                    # T.Resize(256), 
+                    # T.CenterCrop(224), 
+                    T.ToTensor(), 
+                    T.Normalize(mean = [0.485, 0.456, 0.406], 
+                                std = [0.229, 0.224, 0.225])])
+    inp = trf(img_rgb).unsqueeze(0)
+    out = net(inp)['out']
+    om = torch.argmax(out.squeeze(), dim=0).detach().cpu().numpy()
+    mask_rgb = decode_segmap(om)
+
+    # convert our RGB mask into an image for PDF report generation
+    mask_rgb = Image.fromarray(mask_rgb.astype('uint8'),'RGB')
+    
+    # binary mask conversion
+    mask_b = np.sum(mask_rgb, axis=2).astype(np.uint8)
+    mask_b[mask_b > 0] = 1
+
+    if visual:
+        cv2.imshow('original image', img_np)
+        cv2.imshow('mask', mask_b*255)
+        cv2.waitKey(0)
+
+    return mask_b, mask_rgb
+
+
+def cleanContours(img_np: npt.NDArray[np.uint8], mask_b: npt.NDArray[np.uint8], min_area=1000, 
+                  epsilon=0.001, cnt_approx=True, visual=False,):
+    """
+    Given a mask, detect contours, filter out unwanted contours, and clean up.
+
+    Args:
+        img_np (npt.NDArray[np.uint8]): numpy array of original image (H, W, 3).
+        mask_b (npt.NDArray[np.unint8]): binary mask with values of 0 or 1, with 0 defining background (H, W, 1).
+        min_area (int, optional): minimum area of contour accepted. Defaults to 1000.
+        epsilon (int, optional): maximum distance from contour to approximated contour. Defaults to 0.001.
+        cnt_approx (bool, optional): approximate the contour with Douglas-Peucker alg. Defaults to True.
+        visual (bool, optional): visualize the final contours. Defaults to False.
+
+    Returns:
+        npt.NDArray[np.uint8]: binary mask of final contour.
+        npt.NDArray[np.uint8]: original image with the contour drawn on top.
+    """
+
+    img = img_np.copy()
+
+    # find only the external contours in the mask
+    cnts, _ = cv2.findContours(mask_b, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    print("Number of Contours found = " + str(len(cnts)))
+
+    # stacked mask to comply for RGB image dimensions: (N,M,3)
+    mask_stack = np.dstack((mask_b,mask_b,mask_b))*255
+    mask_result = np.zeros(mask_stack.shape)
+
+    # iterate through each contour, and remove those that are less than a specified size
+    for c in cnts:
+        if cv2.contourArea(c) < min_area:
+            mask_stack = cv2.drawContours(mask_stack, [c], -1, (0,0,0), -1)
+        else:
+            if cnt_approx:
+                eps = epsilon*cv2.arcLength(c,True)
+                approx = cv2.approxPolyDP(c,eps,True)
+                img = cv2.drawContours(img, [approx], -1, (0,255,0), 2)
+                mask_result = cv2.drawContours(mask_result, [approx], -1, (255,255,255), -1)
+            else:
+                img = cv2.drawContours(img, [c], -1, (0,255,0), 2)
+                mask_result = cv2.drawContours(mask_result, [c], -1, (255,255,255), -1)
+
+    mask_b = np.sum(mask_result, axis=2).astype(np.uint8)
+    mask_b[mask_b > 0] = 1
+
+    # visualization of final contours on image
+    if visual:
+        cv2.imshow('Image with final contours', img)
+        cv2.imshow('final mask', mask_result)
+        cv2.waitKey(0)
+
+    return mask_b, img
+
+
+def findBoundingBox(img_np, mask_b):
+    cnts, _ = cv2.findContours(mask_b, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    bbs = np.zeros((1,4,1))
+    img = img_np.copy()
+
+    for c in cnts:
+        x,y,w,h = cv2.boundingRect(c)
+        bbs = np.append(bbs,np.asarray([x,y,w,h]).reshape((1,4,1)),axis=0)
+
+    bbs = bbs[1:,:,:]
+
+    for i in range(bbs.shape[0]):
+        bb = bbs[i,:,:].reshape((1,4)).astype(int)
+        bb = bb[0]
+        img = cv2.rectangle(img,(bb[0],bb[1]),(bb[0]+bb[2],bb[1]+bb[3]),(0,0,255),2)
+
+    return bbs,img
