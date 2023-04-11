@@ -42,9 +42,9 @@ for i in np.arange(100):
     np.save(f"./data/{CAMERA_ORI}/{SHOE_FACTOR}/label/mask_{i}.npy", mask_b)
     np.save(f"./data/{CAMERA_ORI}/{SHOE_FACTOR}/label/bbs_{i}.npy", bbs)
 
-    cv2.imshow("original image", img_np)
-    cv2.imshow("image with bounding box and contour", img_bb)
-    cv2.waitKey(0)
+    # cv2.imshow("original image", img_np)
+    # cv2.imshow("image with bounding box and contour", img_bb)
+    # cv2.waitKey(0)
 
     img_bb_rgb = cv2.cvtColor(img_bb, cv2.COLOR_BGR2RGB)
     img_bb_rgb = Image.fromarray(np.uint8(img_bb_rgb)).convert('RGB')
